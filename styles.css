@@ -1,0 +1,9 @@
+/* ============================================
+   Open Vault In VS Code - Styles
+   ============================================ */
+
+.open-vault-in-vscode-settings-note {
+  margin-top: var(--size-4-2);
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}

@@ -1,0 +1,9 @@
+{
+  "id": "open-vault-in-vscode",
+  "name": "Open Vault in VS Code",
+  "version": "1.0.0",
+  "minAppVersion": "1.4.0",
+  "description": "Adds a command to open the current vault root folder in Visual Studio Code.",
+  "author": "Robert Stickler",
+  "isDesktopOnly": true
+}
