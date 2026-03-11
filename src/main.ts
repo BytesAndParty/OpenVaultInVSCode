@@ -1,5 +1,6 @@
 import { FileSystemAdapter, Notice, Plugin } from 'obsidian';
 import { spawn } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import { loadSettings, saveSettings } from './data';
 import { OpenVaultInVSCodeSettingsTab } from './SettingsTab';
 import { DEFAULT_SETTINGS, type OpenVaultInVSCodeSettings } from './types';
@@ -52,7 +53,22 @@ export default class OpenVaultInVSCodePlugin extends Plugin {
       ];
     }
 
+    if (process.platform === 'win32') {
+      const vscodeUri = this.toVSCodeUri(vaultPath);
+      return [
+        { command: codeExecutable, args: [vaultPath] },
+        { command: 'explorer.exe', args: [vscodeUri] },
+        { command: 'cmd.exe', args: ['/d', '/s', '/c', `start "" "${vscodeUri}"`] }
+      ];
+    }
+
     return [{ command: codeExecutable, args: [vaultPath] }];
+  }
+
+  private toVSCodeUri(vaultPath: string): string {
+    const fileUrl = pathToFileURL(vaultPath);
+    const hostPrefix = fileUrl.host ? `//${fileUrl.host}` : '';
+    return `vscode://file${hostPrefix}${fileUrl.pathname}`;
   }
 
   private runLauncher(launcher: Launcher): Promise<boolean> {
@@ -60,13 +76,36 @@ export default class OpenVaultInVSCodePlugin extends Plugin {
       try {
         const child = spawn(launcher.command, launcher.args, {
           detached: true,
-          stdio: 'ignore'
+          stdio: 'ignore',
+          windowsHide: true
         });
 
-        child.once('error', () => resolve(false));
+        let settled = false;
+        const settle = (success: boolean) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          resolve(success);
+        };
+
+        child.once('error', () => settle(false));
         child.once('spawn', () => {
-          child.unref();
-          resolve(true);
+          const settleTimer = setTimeout(() => {
+            child.unref();
+            settle(true);
+          }, 250);
+
+          child.once('exit', (code) => {
+            clearTimeout(settleTimer);
+            if (typeof code === 'number' && code !== 0) {
+              settle(false);
+              return;
+            }
+
+            child.unref();
+            settle(true);
+          });
         });
       } catch {
         resolve(false);

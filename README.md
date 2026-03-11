@@ -2,6 +2,8 @@
 
 Obsidian plugin that adds a command to open the current vault root folder in Visual Studio Code.
 
+The plugin supports macOS and Windows with automatic launch fallbacks in `Auto` mode.
+
 ## Command
 
 - `Open vault root in VS Code` (`open-vault-root-in-vscode`)
@@ -9,18 +11,18 @@ Obsidian plugin that adds a command to open the current vault root folder in Vis
 ## Development
 
 ```bash
-npm install
-npm run dev
+bun install
+bun run dev
 ```
 
 Build once:
 
 ```bash
-npm run build
+bun run build
 ```
 
 Type check:
 
 ```bash
-npm run check
+bun run check
 ```

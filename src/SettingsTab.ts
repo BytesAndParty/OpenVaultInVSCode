@@ -15,7 +15,7 @@ export class OpenVaultInVSCodeSettingsTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Preferred launcher')
-      .setDesc('Choose whether to prefer the code CLI only or use automatic fallback on macOS.')
+      .setDesc('Choose whether to prefer the code CLI only or use automatic fallback on macOS and Windows.')
       .addDropdown((dropdown) =>
         dropdown
           .addOption('auto', 'Auto (recommended)')
