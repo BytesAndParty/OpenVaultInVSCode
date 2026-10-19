@@ -25,7 +25,6 @@ __export(main_exports, {
 module.exports = __toCommonJS(main_exports);
 var import_obsidian2 = require("obsidian");
 var import_node_child_process = require("node:child_process");
-var import_node_url = require("node:url");
 
 // src/types.ts
 var DEFAULT_SETTINGS = {
@@ -73,6 +72,15 @@ var OpenVaultInVSCodeSettingsTab = class extends import_obsidian.PluginSettingTa
 
 // src/main.ts
 var OPEN_COMMAND_ID = "open-vault-root-in-vscode";
+var LOG_PREFIX = "[Open Vault in VS Code]";
+function toVSCodeUri(windowsPath) {
+  const isUnc = /^[\\/]{2}[^\\/]/.test(windowsPath);
+  const segments = windowsPath.replace(/^[\\/]+/, "").split(/[\\/]/);
+  const encoded = segments.map(
+    (segment, index) => index === 0 && !isUnc && /^[A-Za-z]:$/.test(segment) ? segment : encodeURIComponent(segment).replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`)
+  );
+  return `vscode://file${isUnc ? "//" : "/"}${encoded.join("/")}`;
+}
 var OpenVaultInVSCodePlugin = class extends import_obsidian2.Plugin {
   constructor() {
     super(...arguments);
@@ -98,65 +106,77 @@ var OpenVaultInVSCodePlugin = class extends import_obsidian2.Plugin {
     return null;
   }
   getLaunchers(vaultPath) {
-    const codeExecutable = this.settings.codeExecutable?.trim() || DEFAULT_SETTINGS.codeExecutable;
+    const configured = this.settings.codeExecutable;
+    const codeExecutable = typeof configured === "string" && configured.trim() || DEFAULT_SETTINGS.codeExecutable;
+    const codeLauncher = { command: codeExecutable, args: () => [vaultPath] };
     if (this.settings.preferredLauncher === "code-cli") {
-      return [{ command: codeExecutable, args: [vaultPath] }];
+      return [codeLauncher];
     }
     if (process.platform === "darwin") {
       return [
-        { command: codeExecutable, args: [vaultPath] },
-        { command: "open", args: ["-a", "Visual Studio Code", vaultPath] }
+        codeLauncher,
+        { command: "open", args: () => ["-a", "Visual Studio Code", vaultPath] }
       ];
     }
     if (process.platform === "win32") {
-      const vscodeUri = this.toVSCodeUri(vaultPath);
       return [
-        { command: codeExecutable, args: [vaultPath] },
-        { command: "explorer.exe", args: [vscodeUri] },
-        { command: "cmd.exe", args: ["/d", "/s", "/c", `start "" "${vscodeUri}"`] }
+        codeLauncher,
+        { command: "explorer.exe", args: () => [toVSCodeUri(vaultPath)], ignoreExitCode: true },
+        // Same quoting as Node's shell mode: /s strips the outer quotes. The URI has no raw `"`, so it
+        // cannot leave its quotes; /v:off keeps `!` from being expanded. Known limit: cmd still expands
+        // `%name%`, e.g. `%CD%` from U+0340-U+037F (UTF-8 0xCD), which garbles the link (no injection).
+        {
+          command: "cmd.exe",
+          args: () => ["/d", "/v:off", "/s", "/c", `"start "" "${toVSCodeUri(vaultPath)}""`],
+          verbatimArgs: true
+        }
       ];
     }
-    return [{ command: codeExecutable, args: [vaultPath] }];
-  }
-  toVSCodeUri(vaultPath) {
-    const fileUrl = (0, import_node_url.pathToFileURL)(vaultPath);
-    const hostPrefix = fileUrl.host ? `//${fileUrl.host}` : "";
-    return `vscode://file${hostPrefix}${fileUrl.pathname}`;
+    return [codeLauncher];
   }
   runLauncher(launcher) {
+    if (process.platform === "win32" && /\.(bat|cmd)[\s.]*$/i.test(launcher.command)) {
+      return Promise.resolve({ ok: false, reason: `${launcher.command}: batch files are not supported, use the path to Code.exe` });
+    }
     return new Promise((resolve) => {
+      let settled = false;
+      const settle = (result) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        resolve(result);
+      };
       try {
-        const child = (0, import_node_child_process.spawn)(launcher.command, launcher.args, {
+        const child = (0, import_node_child_process.spawn)(launcher.command, launcher.args(), {
           detached: true,
           stdio: "ignore",
-          windowsHide: true
+          windowsHide: true,
+          windowsVerbatimArguments: launcher.verbatimArgs === true
         });
-        let settled = false;
-        const settle = (success) => {
-          if (settled) {
+        child.once("error", (error) => settle({ ok: false, reason: `${launcher.command}: ${error.message}` }));
+        child.once("spawn", () => {
+          if (launcher.ignoreExitCode) {
+            child.unref();
+            settle({ ok: true });
             return;
           }
-          settled = true;
-          resolve(success);
-        };
-        child.once("error", () => settle(false));
-        child.once("spawn", () => {
           const settleTimer = setTimeout(() => {
             child.unref();
-            settle(true);
+            settle({ ok: true });
           }, 250);
           child.once("exit", (code) => {
             clearTimeout(settleTimer);
             if (typeof code === "number" && code !== 0) {
-              settle(false);
+              settle({ ok: false, reason: `${launcher.command} exited with code ${code}` });
               return;
             }
             child.unref();
-            settle(true);
+            settle({ ok: true });
           });
         });
-      } catch {
-        resolve(false);
+      } catch (error) {
+        settle({ ok: false, reason: `${launcher.command}: ${error instanceof Error ? error.message : String(error)}` });
       }
     });
   }
@@ -166,12 +186,15 @@ var OpenVaultInVSCodePlugin = class extends import_obsidian2.Plugin {
       new import_obsidian2.Notice("Vault path is not available on this platform.");
       return;
     }
+    const failures = [];
     for (const launcher of this.getLaunchers(vaultPath)) {
-      const success = await this.runLauncher(launcher);
-      if (success) {
+      const result = await this.runLauncher(launcher);
+      if (result.ok) {
         return;
       }
+      failures.push(result.reason);
     }
+    console.error(`${LOG_PREFIX} Failed to launch VS Code:`, failures);
     new import_obsidian2.Notice("Failed to launch VS Code. Check plugin settings and CLI installation.");
   }
 };
